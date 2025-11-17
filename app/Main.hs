@@ -1,151 +1,202 @@
 -- Functional Expression Evaluator
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE LambdaCase #-}            -- Allows using \case for pattern-matching lambdas
 
-module Main where
+module Main where                       -- Defines the main module
 
-import Data.Char
-import Control.Applicative (Alternative(..))
+import Data.Char                        -- Provides isDigit, isAlpha, isSpace
+import Control.Applicative (Alternative(..)) -- Gives <|>, empty, some, many
 
--- 1. Expression data structure (Abstract Syntax Tree)
--- Represents arithmetic expressions as a tree of operations.
+-- 1. Abstract Syntax Tree (defines all expression node types)
+
 data Expr
-  = Num Double         -- Numeric literal
-  | Add Expr Expr      -- Addition node
-  | Sub Expr Expr      -- Subtraction node
-  | Mul Expr Expr      -- Multiplication node
-  | Div Expr Expr      -- Division node
+  = Num Double                          -- literal number
+  | Add Expr Expr                       -- a + b
+  | Sub Expr Expr                       -- a - b
+  | Mul Expr Expr                       -- a * b
+  | Div Expr Expr                       -- a / b
+  | Pow Expr Expr                       -- a ^ b (exponent)
+  | Abs Expr                            -- abs(a)
+  | Max Expr Expr                       -- max(a, b)
+  | Min Expr Expr                       -- min(a, b)
   deriving (Show, Eq)
 
--- 2. Result type for evaluation outcomes
--- Encodes either a numeric value or an error message.
+-- 2. Result type (evaluation output)
+
 data Result
-  = Value Double       -- Successful evaluation
-  | Error String       -- Error (e.g. division by zero)
+  = Value Double                        -- successfully computed value
+  | Error String                        -- error message
   deriving (Show, Eq)
 
--- 3. Parser definition: turns strings into structured data
--- A parser takes input and returns a parsed value plus leftover text.
-newtype Parser a = Parser { runParser :: String -> Maybe (a, String) }
+-- 3. Parser definition (wrapper around a function)
 
--- Functor: allows applying a function to a parsed result
+newtype Parser a = Parser { runParser :: String -> Maybe (a, String) }
+                                        -- Parser takes a String; returns Maybe (result, remaining)
+
+-- Functor: applies a function to parsed result
 instance Functor Parser where
   fmap f (Parser p) = Parser $ \input -> do
-    (x, rest) <- p(input)
-    Just (f x, rest)
+    (x, rest) <- p input                -- run p
+    Just (f x, rest)                    -- apply f to result
 
--- Applicative: allows combining independent parsers
+-- Applicative: allows sequencing parsers
 instance Applicative Parser where
-  pure x = Parser $ \input -> Just (x, input)
+  pure x = Parser $ \input -> Just (x, input)      -- parser that returns x without consuming input
   (Parser pf) <*> (Parser px) = Parser $ \input -> do
-    (f, rest1) <- pf input
-    (x, rest2) <- px rest1
-    Just (f x, rest2)
+    (f, rest1) <- pf input                          -- parse a function
+    (x, rest2) <- px rest1                          -- parse an argument
+    Just (f x, rest2)                               -- apply function
 
--- Monad: allows sequencing where later parsers depend on earlier results
+-- Monad: allows dependent sequencing (p >>= f)
 instance Monad Parser where
   (Parser p) >>= f = Parser $ \input -> do
-    (x, rest) <- p input
-    runParser (f x) rest
+    (x, rest) <- p input                            -- parse a value
+    runParser (f x) rest                             -- feed value into next parser
   return = pure
 
--- Alternative: supports failure and choice between parsers
+-- Alternative: choice between parsers
 instance Alternative Parser where
-  empty = Parser $ const Nothing
+  empty = Parser $ const Nothing                     -- parser that always fails
   (Parser p1) <|> (Parser p2) = Parser $ \input ->
-    p1 input <|> p2 input
+    p1 input <|> p2 input                            -- try p1, else try p2
 
 -- 4. Basic parsing utilities
+
 satisfy :: (Char -> Bool) -> Parser Char
--- Parses a single character if it meets a condition
 satisfy f = Parser $ \case
-  (x:xs) | f x -> Just (x, xs)
+  (x:xs) | f x -> Just (x, xs)                       -- return char if predicate true
   _            -> Nothing
 
 charP :: Char -> Parser Char
--- Parses a specific character
-charP c = satisfy (== c)
+charP c = satisfy (== c)                             -- parse specific character
 
 spanP :: (Char -> Bool) -> Parser String
--- Consumes as many matching characters as possible
 spanP f = Parser $ \input ->
-  let (token, rest) = span f input
-   in Just (token, rest)
+  let (tok, rest) = span f input                     -- split longest prefix
+   in Just (tok, rest)
 
 ws :: Parser String
--- Skips over any whitespace
-ws = spanP isSpace
+ws = spanP isSpace                                   -- consume whitespace
 
 doubleP :: Parser Double
--- Parses a floating-point number (with optional decimal part)
-doubleP = fmap read $ ws *> number <* ws
+doubleP = fmap read $ ws *> number <* ws             -- parse number with optional spaces
   where
-    number = (++) <$> some (satisfy isDigit)
-                  <*> ( ((:) <$> charP '.' <*> some (satisfy isDigit)) <|> pure "" )
+    number =
+      (++) <$> some (satisfy isDigit)                -- digits
+           <*> ( ((:) <$> charP '.' <*> some (satisfy isDigit))
+                <|> pure "" )                        -- optional decimal part
 
--- 5. Expression grammar with operator precedence
--- expr   := term   ('+' | '-') term*
--- term   := factor ('*' | '/') factor*
--- factor := number | '(' expr ')'
+identP :: Parser String
+identP = ws *> some (satisfy isAlpha) <* ws          -- parse identifier like "abs", "max"
+
+parseExpr :: String -> Maybe Expr
+parseExpr s = case runParser expr s of
+  Just (ast, rest) | all isSpace rest -> Just ast    -- succeed only if entire input parsed
+  _ -> Nothing
+
+signedDoubleP :: Parser Double
+signedDoubleP = (negate <$> (charP '-' *> doubleP))  -- handle negative numbers
+             <|> doubleP
+
+-- 5. Grammar with operator precedence
 
 expr :: Parser Expr
--- Handles + and - (lowest precedence)
-expr = term `chainl1` addop
+expr = term `chainl1` addop                          -- left assoc: +, -
 
 term :: Parser Expr
--- Handles * and / (higher precedence)
-term = factor `chainl1` mulop
+term = power `chainl1` mulop                         -- left assoc: *, /
+
+power :: Parser Expr
+power = factor `chainr1` (Pow <$ charP '^')          -- right assoc: exponent
 
 factor :: Parser Expr
--- Parses numbers or parenthesized expressions
-factor = (Num <$> doubleP)
-     <|> (charP '(' *> expr <* charP ')')
+factor =
+      funcP                                          -- function call
+  <|> (Num <$> signedDoubleP)                        -- number
+  <|> (charP '(' *> expr <* charP ')')               -- parenthesized expression
 
 addop :: Parser (Expr -> Expr -> Expr)
--- Parses + or - and returns corresponding constructor
-addop = (Add <$ charP '+') <|> (Sub <$ charP '-')
+addop = (Add <$ charP '+') <|> (Sub <$ charP '-')    -- return AST constructor
 
 mulop :: Parser (Expr -> Expr -> Expr)
--- Parses * or / and returns corresponding constructor
-mulop = (Mul <$ charP '*') <|> (Div <$ charP '/')
+mulop = (Mul <$ charP '*') <|> (Div <$ charP '/')    -- return AST constructor
 
+-- chainl1: repeatedly apply left-associative operators
 chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
--- Builds left-associative binary operator chains
 chainl1 p op = p >>= rest
   where
     rest x = (do
-      f <- op
-      y <- p
-      rest (f x y)) <|> pure x
+      f <- op                                       -- parse operator
+      y <- p                                        -- parse next operand
+      rest (f x y))                                 -- combine left-associatively
+      <|> pure x                                    -- stop if no more ops
 
--- 6. Evaluator with simple error handling
--- Recursively computes the value of an expression tree.
+-- chainr1: right-associative version
+chainr1 :: Parser a -> Parser (a -> a -> a) -> Parser a
+chainr1 p op = p >>= rest
+  where
+    rest x =
+      (do
+        f <- op                                      -- operator
+        y <- chainr1 p op                            -- recursively parse right side
+        pure (f x y))                                -- build AST
+      <|> pure x
+
+-- 6. Function parser: abs(x), max(a,b), min(a,b)
+
+funcP :: Parser Expr
+funcP = do
+  fname <- identP                                   -- function name
+  charP '('
+  a <- expr                                         -- first argument
+  next <- (charP ',' *> expr >>= \b -> pure (Just b)) -- optional second arg
+       <|> pure Nothing
+  charP ')'
+  case (fname, next) of                             -- build correct constructor
+    ("abs", Nothing)   -> pure (Abs a)
+    ("max", Just b)    -> pure (Max a b)
+    ("min", Just b)    -> pure (Min a b)
+    _                  -> empty                     -- unknown function
+
+-- 7. Evaluator
+
 eval :: Expr -> Result
 eval = \case
-  Num n       -> Value n
-  Add a b     -> bin (+) a b
-  Sub a b     -> bin (-) a b
-  Mul a b     -> bin (*) a b
-  Div a b     ->
+  Num n -> Value n                                   -- literal
+
+  Add a b -> bin (+) a b                             -- binary operators
+  Sub a b -> bin (-) a b
+  Mul a b -> bin (*) a b
+
+  Div a b ->                                         -- division w/ zero check
     case eval b of
-      Error e -> Error e
       Value 0 -> Error "Division by zero"
-      Value n -> case eval a of
-        Error e -> Error e
-        Value m -> Value (m / n)
+      Value n ->
+        case eval a of
+          Value m -> Value (m / n)
+          Error e -> Error e
+      Error e -> Error e
+
+  Pow a b -> bin (**) a b                            -- exponent
+
+  Abs a -> case eval a of
+             Value x -> Value (abs x)
+             Error e -> Error e
+
+  Max a b -> bin max a b
+  Min a b -> bin min a b
+
   where
     bin op a b =
-      case (eval a, eval b) of
+      case (eval a, eval b) of                       -- helper function
         (Value x, Value y) -> Value (x `op` y)
         (Error e, _) -> Error e
         (_, Error e) -> Error e
 
--- 7. Example usage
--- runParser expr "1+2*3-4"
---   ==> Just (Sub (Add (Num 1.0) (Mul (Num 2.0) (Num 3.0))) (Num 4.0),"")
--- eval (Sub (Add (Num 1.0) (Mul (Num 2.0) (Num 3.0))) (Num 4.0))
---   ==> Value 3.0
+-- 8. Main Demo
+
 main :: IO ()
 main = do
-  putStrLn "runParser expr \"1+2*3-4\""
-  putStrLn "Then evaluate with: eval <parsed_expr>"
+  putStrLn "Try: runParser expr \"1 + 2 * 3 - 4\""     -- some examples
+  putStrLn "Try exponent: runParser expr \"2^3^2\""
+  putStrLn "Try functions: runParser expr \"max(3, abs(-5))\""
+  putStrLn "Then evaluate the parsed expression with eval."
