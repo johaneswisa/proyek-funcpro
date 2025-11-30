@@ -110,11 +110,11 @@ Special commands:
 # Example Inputs and Outputs
 Arithmetic
 expr> `1 + 2 * 3`
-> 7
+> 7.0
 
 Functions
 expr> `max(10, 3)`
-> 10
+> 10.0
 
 Derivative
 expr> `deriv(x^2, 3)`
@@ -146,7 +146,7 @@ You should see:
 
 Expression Evaluator  
 Examples:  
-deriv(x^2, 3)  
-integral(x^2, 0, 1)  
+&ensp; deriv(x^2, 3)  
+&ensp; integral(x^2, 0, 1)  
 Commands: :quit, :test  
 expr>
