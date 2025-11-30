@@ -10,6 +10,7 @@ import Test.QuickCheck  hiding (Result)
 import qualified Test.QuickCheck as QC
 
 -- 1. Abstract Syntax Tree (AST)
+-- Definisi bentuk-bentuk ekspresi yang bisa diparse dan dievaluasi.
 data Expr
   = Num Double                    -- literal number
   | Var                           -- variable x
@@ -29,12 +30,14 @@ data Expr
   deriving (Show, Eq)
 
 -- 2. Result type
+-- Representasi hasil evaluasi, bisa bernilai atau error.
 data Result
   = Value Double
   | Error String
   deriving (Show, Eq)
 
 -- 3. Parser definition
+-- Parser monad sederhana: parse string → Maybe (result, sisa-string).
 newtype Parser a = Parser { runParser :: String -> Maybe (a, String) }
 
 instance Functor Parser where
@@ -61,6 +64,7 @@ instance Alternative Parser where
     Parser $ \input -> p1 input <|> p2 input
 
 -- 4. Basic utilities for building parsers
+-- Parser dasar: karakter, string, angka, whitespace.
 satisfy :: (Char -> Bool) -> Parser Char
 satisfy f = Parser $ \case
   (x:xs) | f x -> Just (x,xs)
@@ -80,6 +84,7 @@ ws :: Parser String
 ws = spanP isSpace
 
 doubleP :: Parser Double
+-- Parser angka float positif.
 doubleP = fmap read $ ws *> number <* ws
   where
     number =
@@ -87,17 +92,21 @@ doubleP = fmap read $ ws *> number <* ws
            <*> ( ((:) <$> charP '.' <*> some (satisfy isDigit)) <|> pure "" )
 
 signedDoubleP :: Parser Double
+-- Parser angka dengan tanda.
 signedDoubleP = (negate <$> (charP '-' *> doubleP)) <|> doubleP
 
 identP :: Parser String
+-- Parser identifier seperti abs, max, min, etc.
 identP = ws *> some (satisfy isAlpha) <* ws
 
 parseExpr :: String -> Maybe Expr
+-- Entry point parser utama.
 parseExpr s = case runParser expr s of
   Just (ast, rest) | all isSpace rest -> Just ast
   _ -> Nothing
 
 -- 5. Grammar with operator precedence
+-- Grammar: expr ( + - ), term ( * / % ), power (^), factor.
 expr :: Parser Expr
 expr = term `chainl1` addop
 
@@ -111,7 +120,7 @@ factor :: Parser Expr
 factor =
       funcP
   <|> (Num <$> signedDoubleP)
-  <|> (Var <$ (ws *> stringP "x" <* ws)) -- parse variable 'x'
+  <|> (Var <$ (ws *> stringP "x" <* ws))
   <|> (charP '(' *> expr <* charP ')')
 
 addop :: Parser (Expr -> Expr -> Expr)
@@ -125,7 +134,7 @@ mulop =
   <|> (Div <$ charP '/')
   <|> (Mod <$ charP '%')
 
--- chainl1: left associative
+-- Left-associative operator helper.
 chainl1 :: Parser a -> Parser (a -> a -> a) -> Parser a
 chainl1 p op = p >>= rest
   where
@@ -134,7 +143,7 @@ chainl1 p op = p >>= rest
                  rest (f x y))
              <|> pure x
 
--- chainr1: right associative
+-- Right-associative operator helper.
 chainr1 :: Parser a -> Parser (a -> a -> a) -> Parser a
 chainr1 p op = p >>= rest
   where
@@ -144,16 +153,13 @@ chainr1 p op = p >>= rest
              <|> pure x
 
 -- 6. Function parser (including deriv and integral)
--- NOTE: 'a' is first argument, m2 is optional second, m3 optional third.
+-- Menerima fungsi dengan 1–3 argumen.
 funcP :: Parser Expr
 funcP = do
   fname <- identP
   charP '('
-  -- parse first arg
   a <- expr
-  -- attempt to parse second arg
   m2 <- (charP ',' *> expr >>= \b -> pure (Just b)) <|> pure Nothing
-  -- attempt to parse third arg only if second was present
   m3 <- case m2 of
           Just _  -> (charP ',' *> expr >>= \c -> pure (Just c)) <|> pure Nothing
           Nothing -> pure Nothing
@@ -164,15 +170,14 @@ funcP = do
     ("min", Just b, Nothing)       -> pure (Min a b)
     ("floor", Nothing, Nothing)    -> pure (Floor a)
     ("ceil", Nothing, Nothing)     -> pure (Ceil a)
-    ("deriv", Just p, Nothing)     -> pure (Deriv a p)                 -- deriv(f, point)
-    ("integral", Just lower, Just upper) -> pure (Integral a lower upper) -- integral(f, a, b)
+    ("deriv", Just p, Nothing)     -> pure (Deriv a p)
+    ("integral", Just lower, Just upper) -> pure (Integral a lower upper)
     _                              -> empty
 
 -- 7. Evaluator
---    Primary evaluation (old eval) will error if there is an unbound variable.
---    For calculus operators we implement numeric routines that evaluate functions at numeric points.
+-- Bagian evaluasi, termasuk handling untuk deriv dan integral.
 
--- helper: detect presence of Var in Expr
+-- Cek apakah AST mengandung Var bebas.
 hasVar :: Expr -> Bool
 hasVar = \case
   Var -> True
@@ -191,7 +196,7 @@ hasVar = \case
   Deriv f p -> hasVar f || hasVar p
   Integral f a b -> hasVar f || hasVar a || hasVar b
 
--- evaluate expression when variable x has value xv
+-- Evaluasi dengan substitusi nilai x.
 evalAt :: Expr -> Double -> Result
 evalAt e xv = case e of
   Num n -> Value n
@@ -225,7 +230,7 @@ evalAt e xv = case e of
   Ceil a -> case evalAt a xv of
                Value x -> Value (fromIntegral (ceiling x))
                Error e -> Error e
-  Deriv f p ->                              -- numeric derivative of f at point p
+  Deriv f p ->
     case evalAt p xv of
       Error e -> Error e
       Value pt -> numericDerivative f pt
@@ -241,9 +246,8 @@ evalAt e xv = case e of
         (Error e, _) -> Error e
         (_, Error e) -> Error e
 
--- eval: handle calculus forms first, then fallback to evalAt (reject free vars otherwise)
+-- Top-level evaluator: mencegah Var bebas.
 eval :: Expr -> Result
--- handle Deriv and Integral explicitly (they may contain Var inside f)
 eval (Deriv f p) =
   case eval p of
     Value pt -> numericDerivative f pt
@@ -255,12 +259,12 @@ eval (Integral f a b) =
     (Error e, _) -> Error e
     (_, Error e) -> Error e
 
--- everything else: reject free variable unless it's fully numeric
 eval e
   | hasVar e = Error "Error: expression contains free variable 'x'; use deriv/integral with numeric points or evaluate with evalAt"
   | otherwise = evalAt e 0
 
 -- numeric derivative helper (central difference)
+-- Menggunakan rumus turunan numerik orde 2: (f(x+h)-f(x-h))/(2h)
 numericDerivative :: Expr -> Double -> Result
 numericDerivative f pt =
   let h = 1e-6
@@ -273,11 +277,12 @@ numericDerivative f pt =
        (_, Left e) -> Error e
 
 -- numeric integral helper (composite Simpson's rule)
+-- Simpson rule dengan N=1000: akurat untuk polinomial.
 numericIntegral :: Expr -> Double -> Double -> Result
 numericIntegral f a b
   | a == b = Value 0.0
   | otherwise =
-    let n = 1000                       -- must be even
+    let n = 1000
         n' = if even n then n else n+1
         h = (b - a) / fromIntegral n'
         x i = a + fromIntegral i * h
@@ -285,7 +290,6 @@ numericIntegral f a b
                     Value v -> Right v
                     Error e -> Left e
         indices = [0 .. n']
-        -- Simpson weights: 1,4,2,4,...,4,1
         weight i
           | i == 0 || i == n' = 1
           | even i = 2
@@ -299,7 +303,8 @@ numericIntegral f a b
          Left e -> Error e
          Right s -> Value (h / 3 * s)
 
--- 8. QuickCheck properties for testing (extended for calculus)
+-- 8. QuickCheck tests
+-- Property-based testing untuk parser dan evaluator.
 prop_add_comm :: Double -> Double -> Bool
 prop_add_comm x y =
   eval (Add (Num x) (Num y))
@@ -310,13 +315,9 @@ prop_parseCeil  = parseExpr "ceil(3.1)"  == Just (Ceil (Num 3.1))
 prop_evalFloor  = eval (Floor (Num 3.9)) == Value 3.0
 prop_evalCeil   = eval (Ceil (Num 3.1))  == Value 4.0
 
--- calculus tests:
--- parse deriv(x^2, 3)
 prop_parseDeriv = parseExpr "deriv(x^2,3)" == Just (Deriv (Pow Var (Num 2.0)) (Num 3.0))
--- parse integral(x^2,0,1)
 prop_parseIntegral = parseExpr "integral(x^2,0,1)" == Just (Integral (Pow Var (Num 2.0)) (Num 0.0) (Num 1.0))
 
--- numeric checks with approximate equality
 approxEqual :: Double -> Double -> Double -> Bool
 approxEqual eps a b = abs (a - b) <= eps
 
@@ -325,7 +326,7 @@ prop_evalDeriv_x2_at3 =
   case parseExpr "deriv(x^2,3)" of
     Just ast ->
       case eval ast of
-        Value v -> approxEqual 1e-3 v 6.0     -- derivative of x^2 at 3 is 6
+        Value v -> approxEqual 1e-3 v 6.0
         _ -> False
     _ -> False
 
@@ -334,7 +335,7 @@ prop_evalIntegral_x2_0_1 =
   case parseExpr "integral(x^2,0,1)" of
     Just ast ->
       case eval ast of
-        Value v -> approxEqual 1e-4 v (1/3)   -- integral_0^1 x^2 dx = 1/3
+        Value v -> approxEqual 1e-4 v (1/3)
         _ -> False
     _ -> False
 
@@ -351,6 +352,7 @@ runAllTests = do
   quickCheck prop_evalIntegral_x2_0_1
 
 -- 9. REPL interface
+-- REPL sederhana: parse → eval → cetak hasil.
 repl :: IO ()
 repl = do
   putStr "expr> "
@@ -367,9 +369,10 @@ repl = do
                Error e -> putStrLn e >> repl
 
 -- 10. Main
+-- Entry point.
 main :: IO ()
 main = do
-  putStrLn "Expression Evaluator (Week 6) - calculus operators added"
+  putStrLn "Expression Evaluator"
   putStrLn "Examples:"
   putStrLn "  deriv(x^2, 3)           -- numeric derivative of x^2 at x=3 -> ~6"
   putStrLn "  integral(x^2, 0, 1)     -- numeric integral from 0 to 1 -> ~1/3"
