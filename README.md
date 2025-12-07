@@ -1,4 +1,4 @@
-# Functional Expression Evaluator
+# Functional Expression Evaluator 💻
 
 A small Haskell project that parses and evaluates mathematical expressions. It supports arithmetic operators, functions, variables, numeric differentiation, and numeric integration using common numerical methods.
 
@@ -10,7 +10,7 @@ This project includes:
 - A REPL interface.
 - QuickCheck property-based tests.
 
-# Features
+# Features ⚡
 
 Supported Operators: 
 - Addition, subtraction, multiplication, division, modulo
@@ -26,13 +26,13 @@ Supported Built-in Functions:
 
 Calculus Operations:
 
-- deriv(f, point) — numeric derivative using central difference
-- integral(f, a, b) — numeric definite integral using composite Simpson’s Rule
+- deriv(f, point): numeric derivative using central difference
+- integral(f, a, b): numeric definite integral using composite Simpson’s Rule
 
 Variable:
 - x can be used in expressions of functions for calculus operations.
 
-# How It Works (High-Level):
+# How It Works (High-Level): ⚙️
 
 1. Abstract Syntax Tree (AST)
 
@@ -65,22 +65,44 @@ It includes:
 - Numeric derivative
 - Numeric integral
 
-Expressions that contain a free variable x are rejected unless they appear inside deriv(...) or integral(...).
+Expressions that contain a free variable `x` are rejected unless they appear inside `deriv(...)` or `integral(...)`.
 
 Why free variable check exists:
 
-To prevent ambiguous evaluations like evaluating “x + 5” without a specific value.
+To prevent ambiguous evaluations like evaluating “`x + 5`” without a specific value.
 Users must explicitly evaluate functions inside calculus operators.
 
 4. Numeric Derivative
 
-Computes a numeric approximation using a small step size.
-Internally uses two sample evaluations around the given point.
+This project implements numeric differentiation.
+That means the system does not rewrite expressions (e.g., it does not convert `(x^2) + 1` into `2x`).
+Instead, the derivative is approximated by evaluating the function around a point using a small step size.
+
+Internally, the evaluator treats the expression as a function `f(x)` and computes:   
+- `f(x + h)`
+- `f(x − h)`
+
+Then it combines both values using the central difference formula, which provides a stable and accurate numerical approximation.
+
+Because this approach works purely by sampling the function, it can differentiate any valid expression, even those that would be complex to differentiate symbolically.
+
+This method is simple, robust, and consistent with the evaluator’s functional design.
 
 5. Numeric Integral
 
-Computes the numeric approximation using Composite Simpson’s Rule.
-Internally splits the interval into many small segments and accumulates weighted evaluations.
+The integration feature also uses numeric integration, not symbolic anti-derivatives.
+Thus the system does not compute results like turning `x^2` into `(x^3) / 3`.
+Instead, it approximates the area under the curve of the given expression.
+
+The algorithm used is Composite Simpson’s Rule, which:
+
+- Splits the interval `[a, b]` into many small even segments.
+
+- Approximates each pair of segments with a parabola.
+
+- Accumulates the weighted sum of `f(x)` at finely sampled points.
+
+By repeatedly evaluating the expression at many points, the method yields a highly accurate approximation for the definite integral, even when the symbolic integral is complicated or impossible to express in closed form.
 
 6. QuickCheck Tests
 
@@ -104,32 +126,32 @@ Interactive console environment where you can type expressions and get results.
 
 Special commands:
 
-- :quit — exit
-- :test — run QuickCheck tests
+- `:quit` - exit
+- `:test` - run QuickCheck tests
 
-# Example Inputs and Outputs
-Arithmetic
-expr> `1 + 2 * 3`
+# Example Inputs and Outputs 🎯
+Arithmetic  :  
+`expr> 1 + 2 * 3`
 > 7.0
 
-Functions
-expr> `max(10, 3)`
+Functions:  
+`expr> max(10, 3)`
 > 10.0
 
-Derivative
-expr> `deriv(x^2, 3)`
+Derivative:  
+`expr> deriv(x^2, 3)`
 > 6.000000000838668
 
-Integral
-expr> `integral(x^2, 0, 1)`
+Integral:  
+`expr> integral(x^2, 0, 1)`  
 > 0.33333333333333315
 
-Free variable error
-expr> x + 10
+Free variable error:  
+`expr> x + 10`
 
 > Error: expression contains free variable 'x'; use deriv/integral with numeric points or evaluate with evalAt
 
-# Running the Project
+# Running the Project 🦾
 
 Clone the repository: 
 
@@ -144,9 +166,11 @@ Run using Cabal:
 
 You should see:
 
+```
 Expression Evaluator  
 Examples:  
-&ensp; deriv(x^2, 3)  
-&ensp; integral(x^2, 0, 1)  
+  deriv(x^2, 3)  
+  integral(x^2, 0, 1)  
 Commands: :quit, :test  
 expr>
+```
